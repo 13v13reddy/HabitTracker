@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Habit Tracker Pro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#3b82f6">
+  <meta name="description" content="Advanced Habit Tracker with Progress Visualization">
+  <link rel="manifest" href="/HabitTracker/manifest.json">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/framer-motion@10/dist/framer-motion.js"></script>
+  <style>
+    :root {
+      --health: #10b981;
+      --work: #3b82f6;
+      --personal: #8b5cf6;
+      --other: #64748b;
+    }
+    
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    
+    /* [FIXED] Standardized on left-border for consistency */
+    .habit-health-border { border-left-color: var(--health); }
+    .habit-work-border { border-left-color: var(--work); }
+    .habit-personal-border { border-left-color: var(--personal); }
+    .habit-other-border { border-left-color: var(--other); }
+    
+    .calendar-day {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+    
+    @media (max-width: 640px) {
+      .calendar-day {
+        width: 24px;
+        height: 24px;
+      }
+    }
+    
+    .carousel-container {
+      scroll-snap-type: x mandatory;
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+    }
+    
+    .carousel-item {
+      scroll-snap-align: start;
+      flex: 0 0 auto;
+    }
+    
+    .habit-card {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel" data-presets="react,env">
+    const { useState, useEffect, useRef } = React;
+    const { motion, AnimatePresence } = window.Motion;
+    
+    // Helper functions
+    const dateToKey = date => {
+      const d = new Date(date);
+      d.setHours(0, 0, 0, 0);
+      return d.toISOString().split('T')[0];
+    };
+    
+    const getMonthDates = (year, month) => {
+      const start = new Date(year, month, 1);
+      const end = new Date(year, month + 1, 0);
+      const days = [];
+      for (let i = 0; i < start.getDay(); i++) days.push(null);
+      for (let d = 1; d <= end.getDate(); d++) days.push(new Date(year, month, d));
+      while (days.length < 42) days.push(null);
+      return days;
+    };
+    
+    const calculateStreak = (log) => {
+      const sortedDates = Object.keys(log).filter(key => log[key]).sort((a, b) => new Date(b) - new Date(a));
+      if (sortedDates.length === 0) return 0;
+      
+      const today = new Date();
+      const todayKey = dateToKey(today);
+      const yesterday = new Date();
+      yesterday.setDate(today.getDate() - 1);
+      const yesterdayKey = dateToKey(yesterday);
+      
+      if (sortedDates[0] !== todayKey && sortedDates[0] !== yesterdayKey) return 0;
+      
+      let streak = 1;
+      for (let i = 1; i < sortedDates.length; i++) {
+        const diff = Math.round((new Date(sortedDates[i - 1]) - new Date(sortedDates[i])) / (1000 * 3600 * 24));
+        if (diff === 1) streak++; else break;
+      }
+      return streak;
+    };
+
+    const Modal = ({ isOpen, onClose, title, children }) => {
+      if (!isOpen) return null;
+      return (
+        <AnimatePresence>
+          {isOpen && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+              <motion.div
+                initial={{ y: -30, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: -30, opacity: 0 }}
+                className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-bold text-slate-800">{title}</h2>
+                  <button onClick={onClose} className="text-slate-500 hover:text-slate-800 text-2xl leading-none">×</button>
+                </div>
+                {children}
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      );
+    };
+
+    const TodaysHabits = ({ habits, onMarkDone }) => {
+      const todayKey = dateToKey(new Date());
+      const habitsToDo = habits.filter(habit => !habit.log[todayKey]);
+
+      return (
+        <div className="bg-white rounded-2xl shadow-xl p-6">
+          <h2 className="text-xl font-bold text-slate-800 mb-4">Today's Focus</h2>
+          <AnimatePresence>
+            {habitsToDo.length > 0 ? (
+              <div className="flex flex-wrap gap-3">
+                {habitsToDo.map(habit => (
+                  <motion.div
+                    key={habit.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
+                  >
+                    <button
+                      onClick={() => onMarkDone(habit.id, todayKey)}
+                      className={`flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 rounded-lg border-l-4 habit-${habit.category}-border transition-colors duration-200`}
+                    >
+                      <span className="font-medium text-slate-700">{habit.title}</span>
+                    </button>
+                  </motion.div>
+                ))}
+              </div>
+            ) : (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-center text-slate-500 py-4"
+              >
+                <span className="text-2xl mr-2">🎉</span> All habits done for today! Great work.
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      );
+    };
+    
+    const HabitChart = ({ habit }) => {
+      const chartRef = useRef(null);
+      useEffect(() => {
+        if (!chartRef.current) return;
+        let chartInstance = new Chart(chartRef.current, { type: 'bar', data: { labels: [], datasets: [] }, options: {} });
+        const last7Days = Array.from({ length: 7 }).map((_, i) => { const date = new Date(); date.setDate(date.getDate() - i); return date; }).reverse();
+        const data = last7Days.map(date => habit.log[dateToKey(date)] ? 1 : 0);
+        chartInstance.destroy();
+        const ctx = chartRef.current.getContext('2d');
+        chartInstance = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: last7Days.map(d => d.toLocaleDateString(undefined, { weekday: 'short' })),
+            // [FIXED] Use CSS variable for color based on category
+            datasets: [{ data, backgroundColor: data.map(val => val ? `var(--${habit.category || 'other'})` : '#e2e8f0'), borderWidth: 0 }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+            scales: { y: { display: false, max: 1 }, x: { grid: { display: false } } },
+            animation: { duration: 0 }
+          }
+        });
+        return () => { chartInstance.destroy(); };
+      }, [habit]);
+      return <div className="w-full h-12 mt-auto"><canvas ref={chartRef} /></div>;
+    };
+    
+    const HabitCarousel = ({ habits, activeIndex, onPrev, onNext, onEdit, onDelete }) => {
+      const carouselRef = useRef(null);
+      useEffect(() => { if (carouselRef.current) carouselRef.current.scrollTo({ left: activeIndex * carouselRef.current.offsetWidth, behavior: 'smooth' }); }, [activeIndex]);
+      const arrowBaseStyle = "absolute top-1/2 -translate-y-1/2 z-20 flex items-center justify-center w-9 h-9 rounded-full bg-white/60 backdrop-blur-sm text-slate-700 hover:bg-white/80 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-30 disabled:cursor-not-allowed";
+      return (
+        <div className="relative h-full">
+          <div ref={carouselRef} className="carousel-container flex overflow-x-hidden w-full h-full">
+            {habits.map((habit) => (
+              <div key={habit.id} className="carousel-item w-full flex-shrink-0 p-2">
+                {/* [FIXED] Restored card styling with consistent left border */ }
+                <div className={`habit-card bg-white border border-slate-200 rounded-2xl shadow-xl p-6 w-full border-l-4 habit-${habit.category || 'other'}-border`}>
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="pr-4">
+                      <h2 className="text-xl font-bold text-neutral-800">{habit.title}</h2>
+                      <p className="text-sm text-neutral-500">{Object.values(habit.log).filter(Boolean).length} days | 🔥 {calculateStreak(habit.log)} streak</p>
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <button onClick={() => onEdit(habit)} className="text-slate-400 hover:text-blue-500" title="Edit Habit"> <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L14.732 3.732z"></path></svg> </button>
+                      <button onClick={() => onDelete(habit.id)} className="text-slate-400 hover:text-red-500" title="Delete Habit"> <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg> </button>
+                    </div>
+                  </div>
+                  <HabitChart habit={habit} />
+                </div>
+              </div>
+            ))}
+          </div>
+          {habits.length > 1 && (<>
+            <button onClick={onPrev} className={`${arrowBaseStyle} left-4`} disabled={activeIndex === 0}> <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg> </button>
+            <button onClick={onNext} className={`${arrowBaseStyle} right-4`} disabled={activeIndex === habits.length - 1}> <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg> </button>
+          </>)}
+        </div>
+      );
+    };
+    
+    const CalendarView = ({ habit, onToggle }) => {
+      const today = new Date(); const todayKey = dateToKey(today); const [viewMonth, setViewMonth] = useState(today.getMonth()); const [viewYear, setViewYear] = useState(today.getFullYear()); const [selectedDateKey, setSelectedDateKey] = useState(todayKey);
+      useEffect(() => { setViewMonth(today.getMonth()); setViewYear(today.getFullYear()); setSelectedDateKey(todayKey); }, [habit.id]);
+      const monthDates = getMonthDates(viewYear, viewMonth); const changeMonth = (delta) => { let newMonth = viewMonth + delta; let newYear = viewYear; if (newMonth < 0) { newMonth = 11; newYear--; } else if (newMonth > 11) { newMonth = 0; newYear++; } setViewMonth(newMonth); setViewYear(newYear); };
+      return (
+        <div className="p-6 h-full flex flex-col">
+          <div className="flex justify-between items-center mb-4"> <button onClick={() => changeMonth(-1)} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-700 text-sm">◀</button> <span className="text-sm font-semibold text-slate-700">{new Date(viewYear, viewMonth).toLocaleString("default", { month: "long", year: "numeric" })}</span> <button onClick={() => changeMonth(1)} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-700 text-sm">▶</button> </div>
+          <div className="grid grid-cols-7 gap-1 text-xs mb-1"> {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => <div key={i} className="text-center text-slate-500 font-medium">{d}</div>)} </div>
+          <div className="grid grid-cols-7 gap-1 text-xs">
+            {monthDates.map((date, i) => {
+              if (!date) return <div key={i} className="calendar-day" />;
+              const dateKey = dateToKey(date); const isToday = dateKey === todayKey; const isPast = dateKey < todayKey; const marked = habit.log[dateKey]; const isSelected = dateKey === selectedDateKey;
+              const style = marked ? `bg-emerald-500 text-white ${isPast ? 'opacity-80' : ''}` : isToday ? "bg-amber-200 text-amber-800" : isPast ? "text-slate-400" : "text-slate-300";
+              return (
+                <button key={i} onClick={() => { setSelectedDateKey(dateKey); if (isToday) onToggle(habit.id, dateKey); }} className={`calendar-day rounded-full transition-all font-medium relative ${style} ${isToday ? 'cursor-pointer hover:bg-amber-300' : 'cursor-pointer'} ${isSelected ? 'ring-2 ring-blue-500' : ''}`}>
+                  <span className={marked ? 'opacity-0' : 'opacity-100'}>{date.getDate()}</span>
+                  <AnimatePresence> {marked && (<motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={{ type: "spring", stiffness: 500, damping: 30 }} className="absolute inset-0 flex items-center justify-center"> <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg> </motion.div>)} </AnimatePresence>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-auto pt-4"> <label className="text-sm font-medium text-slate-600 block mb-1">Notes for {new Date(selectedDateKey + 'T12:00:00').toLocaleDateString(undefined, {month: 'long', day: 'numeric'})}</label> <textarea placeholder={selectedDateKey === todayKey ? "Add notes for today..." : "No notes for this day."} className="w-full p-2 border border-slate-200 rounded-lg text-sm bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-400" value={habit.notes?.[selectedDateKey] || ''} readOnly={selectedDateKey !== todayKey} onChange={(e) => onToggle(habit.id, todayKey, e.target.value)}/> </div>
+        </div>
+      );
+    };
+    
+    const HabitDashboard = ({ habits, activeIndex, onPrev, onNext, onEdit, onDelete, onToggle }) => {
+      if (!habits || habits.length === 0) return null;
+      return (
+        <div className="flex flex-col md:flex-row gap-6">
+          <div className="flex-1 min-w-0"> <HabitCarousel habits={habits} activeIndex={activeIndex} onPrev={onPrev} onNext={onNext} onEdit={onEdit} onDelete={onDelete} /> </div>
+          <div className="w-full md:w-80 lg:w-96 flex-shrink-0 bg-white rounded-2xl shadow-xl"> <CalendarView habit={habits[activeIndex]} onToggle={onToggle} /> </div>
+        </div>
+      );
+    };
+    
+    const App = () => {
+      const [habits, setHabits] = useState(() => { try { const s = localStorage.getItem("habits"); return s ? JSON.parse(s) : []; } catch (e) { return []; } });
+      const [activeHabitIndex, setActiveHabitIndex] = useState(0);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [habitToDelete, setHabitToDelete] = useState(null);
+      const [editingHabit, setEditingHabit] = useState(null);
+      
+      useEffect(() => { localStorage.setItem("habits", JSON.stringify(habits)); }, [habits]);
+      
+      const addHabit = (title, category) => {
+        if (!title.trim()) return;
+        const newHabit = { id: Date.now(), title, category, log: {}, notes: {} };
+        const newHabits = [...habits, newHabit];
+        setHabits(newHabits);
+        setActiveHabitIndex(newHabits.length - 1);
+      };
+      
+      const toggleDate = (habitId, dateKey, note) => {
+        setHabits(prev =>
+          prev.map(habit => {
+            if (habit.id !== habitId) return habit;
+            const newLog = note !== undefined ? { ...habit.log, [dateKey]: true } : { ...habit.log, [dateKey]: !habit.log[dateKey] };
+            const newNotes = note !== undefined ? { ...habit.notes, [dateKey]: note } : habit.notes;
+            return { ...habit, log: newLog, notes: newNotes };
+          })
+        );
+      };
+      
+      const handleOpenDeleteModal = (id) => setHabitToDelete(id);
+      const handleOpenEditModal = (habit) => setEditingHabit(habit);
+      const handleConfirmDelete = () => {
+        if (!habitToDelete) return;
+        setHabits(prev => {
+          const newHabits = prev.filter(h => h.id !== habitToDelete);
+          if (activeHabitIndex >= newHabits.length && newHabits.length > 0) setActiveHabitIndex(newHabits.length - 1);
+          else if (newHabits.length === 0) setActiveHabitIndex(0);
+          return newHabits;
+        });
+        setHabitToDelete(null);
+      };
+      
+      const handleUpdateHabit = (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const updatedTitle = formData.get('title').trim();
+        const updatedCategory = formData.get('category');
+        if (!updatedTitle) return;
+        setHabits(habits.map(h => h.id === editingHabit.id ? {...h, title: updatedTitle, category: updatedCategory} : h));
+        setEditingHabit(null);
+      };
+
+      const markAllToday = () => { const todayKey = dateToKey(new Date()); setHabits(prev => prev.map(habit => ({ ...habit, log: { ...habit.log, [todayKey]: true } }))); };
+      const filteredHabits = habits.filter(h => h.title.toLowerCase().includes(searchQuery.toLowerCase()));
+      const handlePrevHabit = () => activeHabitIndex > 0 && setActiveHabitIndex(activeHabitIndex - 1);
+      const handleNextHabit = () => activeHabitIndex < filteredHabits.length - 1 && setActiveHabitIndex(activeHabitIndex + 1);
+      
+      return (
+        <div className="min-h-screen px-4 sm:px-6 py-8">
+          <div className="max-w-6xl mx-auto space-y-8">
+            <header className="text-center">
+              <h1 className="text-4xl font-bold text-slate-800 mb-2">Habit Tracker Pro</h1>
+              <p className="text-slate-500">Track your habits. Stay consistent.</p>
+            </header>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+               <div className="flex gap-2">
+                 <input type="text" placeholder="Add a new habit..." className="px-4 py-2 border border-slate-300 rounded-lg flex-grow bg-white focus:ring-2 focus:ring-blue-400" onKeyDown={(e) => { if (e.key === 'Enter') { const c = document.getElementById('habitCategory'); addHabit(e.target.value, c.value); e.target.value = ''; } }} />
+                 <select id="habitCategory" className="px-4 py-2 border border-slate-300 rounded-lg bg-white" defaultValue="health">
+                   <option value="health">Health</option><option value="work">Work</option><option value="personal">Personal</option><option value="other">Other</option>
+                 </select>
+               </div>
+               <div className="flex gap-2">
+                 <input type="text" placeholder="Search habits..." className="px-4 py-2 border border-slate-300 rounded-lg w-full bg-white focus:ring-2 focus:ring-blue-400" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setActiveHabitIndex(0); }}/>
+                 <button onClick={markAllToday} className="px-4 py-2 bg-blue-500 text-white rounded-lg whitespace-nowrap hover:bg-blue-600 transition-colors">Mark All Today</button>
+               </div>
+            </div>
+            
+            {habits.length > 0 && <TodaysHabits habits={filteredHabits} onMarkDone={toggleDate} />}
+
+            <AnimatePresence>
+              {filteredHabits.length === 0 ? (
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="text-center text-slate-500 py-10 bg-white rounded-2xl shadow-xl flex flex-col items-center justify-center">
+                   <svg className="w-16 h-16 text-slate-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                   <h3 className="text-xl font-semibold text-slate-700">No Habits Yet</h3>
+                   <p className="mt-1">{searchQuery ? 'No habits match your search.' : 'Add a new habit above to get started!'}</p>
+                </motion.div>
+              ) : (
+                <HabitDashboard
+                  habits={filteredHabits} activeIndex={activeHabitIndex}
+                  onPrev={handlePrevHabit} onNext={handleNextHabit}
+                  onEdit={handleOpenEditModal} onDelete={handleOpenDeleteModal} onToggle={toggleDate}
+                />
+              )}
+            </AnimatePresence>
+          </div>
+
+          <Modal isOpen={!!habitToDelete} onClose={() => setHabitToDelete(null)} title="Confirm Deletion">
+             <p className="text-slate-600 mb-6">Are you sure you want to delete this habit? All its data will be lost forever.</p>
+             <div className="flex justify-end gap-3">
+               <button onClick={() => setHabitToDelete(null)} className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200">Cancel</button>
+               <button onClick={handleConfirmDelete} className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600">Delete</button>
+             </div>
+          </Modal>
+
+          <Modal isOpen={!!editingHabit} onClose={() => setEditingHabit(null)} title="Edit Habit">
+             <form onSubmit={handleUpdateHabit}>
+               <div className="space-y-4">
+                 <div>
+                   <label htmlFor="edit-title" className="block text-sm font-medium text-slate-700">Habit Title</label>
+                   <input type="text" name="title" id="edit-title" defaultValue={editingHabit?.title} required className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"/>
+                 </div>
+                 <div>
+                   <label htmlFor="edit-category" className="block text-sm font-medium text-slate-700">Category</label>
+                   <select name="category" id="edit-category" defaultValue={editingHabit?.category} className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                     <option value="health">Health</option><option value="work">Work</option><option value="personal">Personal</option><option value="other">Other</option>
+                   </select>
+                 </div>
+               </div>
+               <div className="flex justify-end gap-3 mt-8">
+                 <button type="button" onClick={() => setEditingHabit(null)} className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200">Cancel</button>
+                 <button type="submit" className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">Save Changes</button>
+               </div>
+             </form>
+          </Modal>
+        </div>
+      );
+    };
+    
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+  
+  <noscript>
+    <div style="text-align: center; padding: 2rem;">
+      <h1>Habit Tracker Pro</h1>
+      <p>This application requires JavaScript to function. Please enable JavaScript in your browser settings.</p>
+    </div>
+  </noscript>
+</body>
+</html>
