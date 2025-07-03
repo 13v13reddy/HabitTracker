@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Habit Tracker Pro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#3b82f6">
+  <meta name="description" content="Advanced Habit Tracker with Progress Visualization">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/framer-motion@10/dist/framer-motion.js"></script>
+  <style>
+    :root {
+      --health: #10b981;
+      --work: #3b82f6;
+      --personal: #8b5cf6;
+      --other: #64748b;
+    }
+    
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    
+    .habit-health-border { border-left-color: var(--health); }
+    .habit-work-border { border-left-color: var(--work); }
+    .habit-personal-border { border-left-color: var(--personal); }
+    .habit-other-border { border-left-color: var(--other); }
+    
+    .calendar-day {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+    
+    @media (max-width: 640px) {
+      .calendar-day {
+        width: 24px;
+        height: 24px;
+      }
+    }
+    
+    .dropdown-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease-out;
+    }
+    
+    .dropdown-content.open {
+      max-height: 500px;
+      transition: max-height 0.3s ease-in;
+    }
+    
+    .filter-btn {
+      transition: all 0.2s ease;
+    }
+    
+    .filter-btn.active {
+      background-color: #3b82f6;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel" data-presets="react,env">
+    const { useState, useEffect, useRef } = React;
+    const { motion, AnimatePresence } = window.Motion;
+    
+    // Helper functions
+    const dateToKey = date => {
+      const d = new Date(date);
+      d.setHours(0, 0, 0, 0);
+      return d.toISOString().split('T')[0];
+    };
+    
+    const getMonthDates = (year, month) => {
+      const start = new Date(year, month, 1);
+      const end = new Date(year, month + 1, 0);
+      const days = [];
+      for (let i = 0; i < start.getDay(); i++) days.push(null);
+      for (let d = 1; d <= end.getDate(); d++) days.push(new Date(year, month, d));
+      while (days.length < 42) days.push(null);
+      return days;
+    };
+    
+    const calculateStreak = (log) => {
+      const sortedDates = Object.keys(log).filter(key => log[key]).sort((a, b) => new Date(b) - new Date(a));
+      if (sortedDates.length === 0) return 0;
+      
+      const today = new Date();
+      const todayKey = dateToKey(today);
+      const yesterday = new Date();
+      yesterday.setDate(today.getDate() - 1);
+      const yesterdayKey = dateToKey(yesterday);
+      
+      if (sortedDates[0] !== todayKey && sortedDates[0] !== yesterdayKey) return 0;
+      
+      let streak = 1;
+      for (let i = 1; i < sortedDates.length; i++) {
+        const diff = Math.round((new Date(sortedDates[i - 1]) - new Date(sortedDates[i])) / (1000 * 3600 * 24));
+        if (diff === 1) streak++; else break;
+      }
+      return streak;
+    };
+
+    const Modal = ({ isOpen, onClose, title, children }) => {
+      if (!isOpen) return null;
+      return (
+        <AnimatePresence>
+          {isOpen && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+              <motion.div
+                initial={{ y: -30, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: -30, opacity: 0 }}
+                className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-bold text-slate-800">{title}</h2>
+                  <button onClick={onClose} className="text-slate-500 hover:text-slate-800 text-2xl leading-none">×</button>
+                </div>
+                {children}
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      );
+    };
+
+    const TodaysHabits = ({ habits, onMarkDone }) => {
+      const todayKey = dateToKey(new Date());
+      const habitsToDo = habits.filter(habit => !habit.log[todayKey]);
+
+      return (
+        <div className="bg-white rounded-2xl shadow-xl p-6 h-full">
+          <h2 className="text-xl font-bold text-slate-800 mb-4">Today's Focus</h2>
+          <AnimatePresence>
+            {habitsToDo.length > 0 ? (
+              <div className="flex flex-col gap-3">
+                {habitsToDo.map(habit => (
+                  <motion.div
+                    key={habit.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
+                  >
+                    <button
+                      onClick={() => onMarkDone(habit.id, todayKey)}
+                      className={`flex items-center gap-3 px-4 py-3 bg-slate-50 hover:bg-slate-100 rounded-lg border-l-4 habit-${habit.category}-border transition-colors duration-200 w-full`}
+                    >
+                      <span className="font-medium text-slate-700">{habit.title}</span>
+                      <span className="ml-auto text-xs text-slate-500">🔥 {calculateStreak(habit.log)} streak</span>
+                    </button>
+                  </motion.div>
+                ))}
+              </div>
+            ) : (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-center text-slate-500 py-4"
+              >
+                <span className="text-2xl mr-2">🎉</span> All habits done for today! Great work.
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      );
+    };
+    
+    const HabitCalendarWithDropdown = ({ habits, selectedHabit, onSelect, onToggle, onEdit, onDelete }) => {
+      const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+      const dropdownRef = useRef(null);
+      const today = new Date();
+      const todayKey = dateToKey(today);
+      const [viewMonth, setViewMonth] = useState(today.getMonth());
+      const [viewYear, setViewYear] = useState(today.getFullYear());
+      const [selectedDateKey, setSelectedDateKey] = useState(todayKey);
+
+      useEffect(() => {
+        const handleClickOutside = (event) => {
+          if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+            setIsDropdownOpen(false);
+          }
+        };
+        
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+      }, []);
+
+      const monthDates = getMonthDates(viewYear, viewMonth);
+      const changeMonth = (delta) => {
+        let newMonth = viewMonth + delta;
+        let newYear = viewYear;
+        if (newMonth < 0) { newMonth = 11; newYear--; }
+        else if (newMonth > 11) { newMonth = 0; newYear++; }
+        setViewMonth(newMonth);
+        setViewYear(newYear);
+      };
+
+      const handleToggleDate = (habitId, dateKey) => {
+        onToggle(habitId, dateKey);
+      };
+
+      const handleSelectHabit = (habit) => {
+        onSelect(habit);
+        setIsDropdownOpen(false);
+      };
+
+      return (
+        <div className="bg-white rounded-2xl shadow-xl p-6 h-full">
+          {/* Dropdown Header */}
+          <div className="flex justify-between items-center mb-4">
+            <div className="relative w-full" ref={dropdownRef}>
+              <button
+                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                className="flex items-center justify-between w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <span className="font-medium text-slate-700">
+                  {selectedHabit ? selectedHabit.title : "Select a habit..."}
+                </span>
+                <svg
+                  className={`w-5 h-5 text-slate-400 transform transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+              </button>
+              
+              {isDropdownOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute z-10 w-full mt-1 bg-white rounded-lg shadow-lg border border-slate-200 max-h-60 overflow-auto"
+                >
+                  {habits.map(habit => (
+                    <div key={habit.id} className="group">
+                      <div
+                        onClick={() => handleSelectHabit(habit)}
+                        className={`w-full px-4 py-2 text-left hover:bg-slate-100 flex items-center justify-between cursor-pointer ${selectedHabit?.id === habit.id ? 'bg-blue-50' : ''}`}
+                      >
+                        <span className="truncate">{habit.title}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">🔥 {calculateStreak(habit.log)}</span>
+                          <div 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onEdit(habit);
+                            }}
+                            className="text-slate-400 hover:text-blue-500 invisible group-hover:visible p-1"
+                            title="Edit Habit"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L14.732 3.732z"></path>
+                            </svg>
+                          </div>
+                          <div 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDelete(habit.id);
+                            }}
+                            className="text-slate-400 hover:text-red-500 invisible group-hover:visible p-1"
+                            title="Delete Habit"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                            </svg>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </motion.div>
+              )}
+            </div>
+          </div>
+
+          {/* Calendar */}
+          {selectedHabit && (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center mb-2"> 
+                <button onClick={() => changeMonth(-1)} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-700 text-sm">◀</button> 
+                <span className="text-sm font-semibold text-slate-700">
+                  {new Date(viewYear, viewMonth).toLocaleString("default", { month: "long", year: "numeric" })}
+                </span> 
+                <button onClick={() => changeMonth(1)} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-700 text-sm">▶</button> 
+              </div>
+              <div className="grid grid-cols-7 gap-1 text-xs mb-1"> 
+                {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => 
+                  <div key={i} className="text-center text-slate-500 font-medium">{d}</div>
+                )} 
+              </div>
+              <div className="grid grid-cols-7 gap-1 text-xs">
+                {monthDates.map((date, i) => {
+                  if (!date) return <div key={i} className="calendar-day" />;
+                  const dateKey = dateToKey(date);
+                  const isToday = dateKey === todayKey;
+                  const isPast = dateKey < todayKey;
+                  const marked = selectedHabit.log[dateKey];
+                  const isSelected = dateKey === selectedDateKey;
+                  const style = marked ? `bg-emerald-500 text-white ${isPast ? 'opacity-80' : ''}` : 
+                                isToday ? "bg-amber-200 text-amber-800" : 
+                                isPast ? "text-slate-400" : "text-slate-300";
+                  return (
+                    <button 
+                      key={i} 
+                      onClick={() => { 
+                        setSelectedDateKey(dateKey); 
+                        if (isToday) handleToggleDate(selectedHabit.id, dateKey); 
+                      }} 
+                      className={`calendar-day rounded-full transition-all font-medium relative ${style} ${isToday ? 'cursor-pointer hover:bg-amber-300' : 'cursor-pointer'} ${isSelected ? 'ring-2 ring-blue-500' : ''}`}
+                    >
+                      <span className={marked ? 'opacity-0' : 'opacity-100'}>{date.getDate()}</span>
+                      <AnimatePresence> 
+                        {marked && (
+                          <motion.div 
+                            initial={{ scale: 0 }} 
+                            animate={{ scale: 1 }} 
+                            exit={{ scale: 0 }} 
+                            transition={{ type: "spring", stiffness: 500, damping: 30 }} 
+                            className="absolute inset-0 flex items-center justify-center"
+                          > 
+                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
+                            </svg> 
+                          </motion.div>
+                        )} 
+                      </AnimatePresence>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-4 pt-4"> 
+                <label className="text-sm font-medium text-slate-600 block mb-1">
+                  Notes for {new Date(selectedDateKey + 'T12:00:00').toLocaleDateString(undefined, {month: 'long', day: 'numeric'})}
+                </label> 
+                <textarea 
+                  placeholder={selectedDateKey === todayKey ? "Add notes for today..." : "No notes for this day."} 
+                  className="w-full p-2 border border-slate-200 rounded-lg text-sm bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-400" 
+                  value={selectedHabit.notes?.[selectedDateKey] || ''} 
+                  readOnly={selectedDateKey !== todayKey} 
+                  onChange={(e) => onToggle(selectedHabit.id, todayKey, e.target.value)}
+                /> 
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+    
+    const HabitDashboard = ({ habits, onToggle, onEdit, onDelete }) => {
+      const [selectedHabit, setSelectedHabit] = useState(null);
+      const [activeFilter, setActiveFilter] = useState('all');
+      
+      const filteredHabits = habits.filter(habit => {
+        if (activeFilter === 'all') return true;
+        return habit.category === activeFilter;
+      });
+      
+      useEffect(() => {
+        // Reset selected habit when habits or filter changes
+        if (filteredHabits.length > 0) {
+          // Try to keep the same habit if it exists in filtered list
+          const currentHabitInFilter = selectedHabit && filteredHabits.find(h => h.id === selectedHabit.id);
+          setSelectedHabit(currentHabitInFilter || filteredHabits[0]);
+        } else {
+          setSelectedHabit(null);
+        }
+      }, [filteredHabits, activeFilter]);
+      
+      if (!habits || habits.length === 0) return null;
+      
+      return (
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="w-full lg:w-1/3">
+            <TodaysHabits habits={filteredHabits} onMarkDone={onToggle} />
+          </div>
+          <div className="w-full lg:w-2/3">
+            <HabitCalendarWithDropdown 
+              habits={filteredHabits} 
+              selectedHabit={selectedHabit}
+              onSelect={setSelectedHabit}
+              onToggle={onToggle}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
+          </div>
+        </div>
+      );
+    };
+    
+    const App = () => {
+      const [habits, setHabits] = useState(() => { 
+        try { 
+          const s = localStorage.getItem("habits"); 
+          return s ? JSON.parse(s) : []; 
+        } catch (e) { 
+          return []; 
+        } 
+      });
+      const [activeFilter, setActiveFilter] = useState('all');
+      const [habitToDelete, setHabitToDelete] = useState(null);
+      const [editingHabit, setEditingHabit] = useState(null);
+      
+      useEffect(() => { 
+        localStorage.setItem("habits", JSON.stringify(habits)); 
+      }, [habits]);
+      
+      const addHabit = (title, category) => {
+        if (!title.trim()) return;
+        const newHabit = { 
+          id: Date.now(), 
+          title, 
+          category, 
+          log: {}, 
+          notes: {} 
+        };
+        setHabits([...habits, newHabit]);
+      };
+      
+      const toggleDate = (habitId, dateKey, note) => {
+        setHabits(prev =>
+          prev.map(habit => {
+            if (habit.id !== habitId) return habit;
+            const newLog = note !== undefined ? 
+              { ...habit.log, [dateKey]: true } : 
+              { ...habit.log, [dateKey]: !habit.log[dateKey] };
+            const newNotes = note !== undefined ? 
+              { ...habit.notes, [dateKey]: note } : 
+              habit.notes;
+            return { ...habit, log: newLog, notes: newNotes };
+          })
+        );
+      };
+      
+      const handleOpenDeleteModal = (id) => setHabitToDelete(id);
+      const handleOpenEditModal = (habit) => setEditingHabit(habit);
+      
+      const handleConfirmDelete = () => {
+        if (!habitToDelete) return;
+        setHabits(prev => prev.filter(h => h.id !== habitToDelete));
+        setHabitToDelete(null);
+      };
+      
+      const handleUpdateHabit = (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const updatedTitle = formData.get('title').trim();
+        const updatedCategory = formData.get('category');
+        if (!updatedTitle) return;
+        setHabits(habits.map(h => 
+          h.id === editingHabit.id ? 
+          {...h, title: updatedTitle, category: updatedCategory} : 
+          h
+        ));
+        setEditingHabit(null);
+      };
+
+      const filteredHabits = habits.filter(habit => {
+        if (activeFilter === 'all') return true;
+        return habit.category === activeFilter;
+      });
+      
+      return (
+        <div className="min-h-screen px-4 sm:px-6 py-8">
+          <div className="max-w-6xl mx-auto space-y-8">
+            <header className="text-center">
+              <h1 className="text-4xl font-bold text-slate-800 mb-2">Habit Tracker Pro</h1>
+              <p className="text-slate-500">Track your habits. Stay consistent.</p>
+            </header>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  placeholder="Add a new habit..." 
+                  className="px-4 py-2 border border-slate-300 rounded-lg flex-grow bg-white focus:ring-2 focus:ring-blue-400" 
+                  onKeyDown={(e) => { 
+                    if (e.key === 'Enter') { 
+                      const c = document.getElementById('habitCategory'); 
+                      addHabit(e.target.value, c.value); 
+                      e.target.value = ''; 
+                    } 
+                  }} 
+                />
+                <select 
+                  id="habitCategory" 
+                  className="px-4 py-2 border border-slate-300 rounded-lg bg-white" 
+                  defaultValue="health"
+                >
+                  <option value="health">Health</option>
+                  <option value="work">Work</option>
+                  <option value="personal">Personal</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-full">
+                <button
+                  onClick={() => setActiveFilter('all')}
+                  className={`filter-btn px-3 py-1 rounded-md text-sm ${activeFilter === 'all' ? 'active' : ''}`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setActiveFilter('health')}
+                  className={`filter-btn px-3 py-1 rounded-md text-sm ${activeFilter === 'health' ? 'active bg-emerald-500 text-white' : ''}`}
+                >
+                  Health
+                </button>
+                <button
+                  onClick={() => setActiveFilter('work')}
+                  className={`filter-btn px-3 py-1 rounded-md text-sm ${activeFilter === 'work' ? 'active bg-blue-500 text-white' : ''}`}
+                >
+                  Work
+                </button>
+                <button
+                  onClick={() => setActiveFilter('personal')}
+                  className={`filter-btn px-3 py-1 rounded-md text-sm ${activeFilter === 'personal' ? 'active bg-purple-500 text-white' : ''}`}
+                >
+                  Personal
+                </button>
+                <button
+                  onClick={() => setActiveFilter('other')}
+                  className={`filter-btn px-3 py-1 rounded-md text-sm ${activeFilter === 'other' ? 'active bg-slate-500 text-white' : ''}`}
+                >
+                  Other
+                </button>
+              </div>
+            </div>
+            
+            <AnimatePresence>
+              {filteredHabits.length === 0 ? (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  className="text-center text-slate-500 py-10 bg-white rounded-2xl shadow-xl flex flex-col items-center justify-center"
+                >
+                  <svg 
+                    className="w-16 h-16 text-slate-300 mb-4" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth="1.5" 
+                      d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+                    ></path>
+                  </svg>
+                  <h3 className="text-xl font-semibold text-slate-700">No Habits Yet</h3>
+                  <p className="mt-1">
+                    {activeFilter !== 'all' ? `No ${activeFilter} habits found.` : 'Add a new habit above to get started!'}
+                  </p>
+                </motion.div>
+              ) : (
+                <HabitDashboard
+                  habits={filteredHabits}
+                  onToggle={toggleDate}
+                  onEdit={handleOpenEditModal}
+                  onDelete={handleOpenDeleteModal}
+                />
+              )}
+            </AnimatePresence>
+          </div>
+
+          <Modal isOpen={!!habitToDelete} onClose={() => setHabitToDelete(null)} title="Confirm Deletion">
+            <p className="text-slate-600 mb-6">
+              Are you sure you want to delete this habit? All its data will be lost forever.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => setHabitToDelete(null)} 
+                className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleConfirmDelete} 
+                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
+              >
+                Delete
+              </button>
+            </div>
+          </Modal>
+
+          <Modal isOpen={!!editingHabit} onClose={() => setEditingHabit(null)} title="Edit Habit">
+            <form onSubmit={handleUpdateHabit}>
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="edit-title" className="block text-sm font-medium text-slate-700">
+                    Habit Title
+                  </label>
+                  <input 
+                    type="text" 
+                    name="title" 
+                    id="edit-title" 
+                    defaultValue={editingHabit?.title} 
+                    required 
+                    className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="edit-category" className="block text-sm font-medium text-slate-700">
+                    Category
+                  </label>
+                  <select 
+                    name="category" 
+                    id="edit-category" 
+                    defaultValue={editingHabit?.category} 
+                    className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="health">Health</option>
+                    <option value="work">Work</option>
+                    <option value="personal">Personal</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-8">
+                <button 
+                  type="button" 
+                  onClick={() => setEditingHabit(null)} 
+                  className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </Modal>
+        </div>
+      );
+    };
+    
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+  
+  <noscript>
+    <div style="text-align: center; padding: 2rem;">
+      <h1>Habit Tracker Pro</h1>
+      <p>This application requires JavaScript to function. Please enable JavaScript in your browser settings.</p>
+    </div>
+  </noscript>
+</body>
+</html>
