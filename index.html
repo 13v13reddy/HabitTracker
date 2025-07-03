@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#3b82f6">
   <meta name="description" content="Advanced Habit Tracker with Progress Visualization">
-  <link rel="manifest" href="manifest.json">
+  <link rel="manifest" href="/HabitTracker/manifest.json">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -49,11 +49,6 @@
         bottom: 0;
       }
     }
-    
-    /* Swipe gestures */
-    [data-swipe] {
-      touch-action: pan-y;
-    }
   </style>
 </head>
 <body>
@@ -62,10 +57,6 @@
   <script type="text/babel" data-presets="react,env">
     const { useState, useEffect, useRef } = React;
     const { motion, AnimatePresence } = window.Motion;
-    
-    // Feature detection
-    const isPWA = window.matchMedia('(display-mode: standalone)').matches;
-    const supportsTouch = 'ontouchstart' in window;
     
     // Helper functions
     const dateToKey = date => date.toISOString().split('T')[0];
@@ -122,9 +113,15 @@
     
     const HabitChart = ({ habit }) => {
       const chartRef = useRef(null);
+      const chartInstance = useRef(null);
       
       useEffect(() => {
         if (!chartRef.current) return;
+        
+        // Destroy previous chart if exists
+        if (chartInstance.current) {
+          chartInstance.current.destroy();
+        }
         
         const last7Days = Array.from({ length: 7 })
           .map((_, i) => {
@@ -137,7 +134,7 @@
         const data = last7Days.map(date => habit.log[date] ? 1 : 0);
         
         const ctx = chartRef.current.getContext('2d');
-        new Chart(ctx, {
+        chartInstance.current = new Chart(ctx, {
           type: 'bar',
           data: {
             labels: last7Days.map(d => new Date(d).toLocaleDateString(undefined, { weekday: 'short' })),
@@ -156,6 +153,13 @@
             }
           }
         });
+        
+        // Cleanup function
+        return () => {
+          if (chartInstance.current) {
+            chartInstance.current.destroy();
+          }
+        };
       }, [habit]);
       
       return <canvas ref={chartRef} className="w-full h-12" />;
@@ -183,42 +187,9 @@
       );
     };
     
-    const HabitView = ({ view, year, month, date }) => {
-      switch (view) {
-        case 'week':
-          const weekDates = getWeekDates(date);
-          return (
-            <div className="grid grid-cols-7 gap-1 text-xs">
-              {weekDates.map((date, i) => (
-                <div key={i} className="text-center text-neutral-500 text-xs mb-1">
-                  {date.toLocaleDateString(undefined, { weekday: 'narrow' })}
-                  <br />
-                  {date.getDate()}
-                </div>
-              ))}
-            </div>
-          );
-        case 'month':
-          const monthDates = getMonthDates(year, month);
-          return (
-            <div className="grid grid-cols-7 gap-1 text-xs">
-              {monthDates.map((date, i) => date ? (
-                <div key={i} className="text-center text-neutral-500">
-                  {date.getDate()}
-                </div>
-              ) : <div key={i} />)}
-            </div>
-          );
-        default:
-          return null;
-      }
-    };
-    
     const Habit = ({ habit, onToggle, onDelete, view, onViewChange }) => {
       const today = new Date();
       const [currentDate, setCurrentDate] = useState(today);
-      const [touchStart, setTouchStart] = useState(0);
-      const [touchEnd, setTouchEnd] = useState(0);
       
       const viewMonth = currentDate.getMonth();
       const viewYear = currentDate.getFullYear();
@@ -236,20 +207,6 @@
         const newDate = new Date(currentDate);
         newDate.setDate(newDate.getDate() + days);
         setCurrentDate(newDate);
-      };
-      
-      // Swipe gestures for mobile
-      const handleTouchStart = (e) => {
-        setTouchStart(e.targetTouches[0].clientX);
-      };
-      
-      const handleTouchMove = (e) => {
-        setTouchEnd(e.targetTouches[0].clientX);
-      };
-      
-      const handleTouchEnd = () => {
-        if (touchStart - touchEnd > 50) changeDate(7); // Swipe left - next week
-        if (touchStart - touchEnd < -50) changeDate(-7); // Swipe right - previous week
       };
       
       return (
@@ -291,13 +248,7 @@
           
           <HabitChart habit={habit} />
           
-          <div 
-            className="mt-4"
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            data-swipe
-          >
+          <div className="mt-4">
             <div className="flex justify-between items-center mb-2">
               <button
                 onClick={() => changeDate(-7)}
@@ -319,13 +270,6 @@
                 ▶
               </button>
             </div>
-            
-            <HabitView 
-              view={view} 
-              year={viewYear} 
-              month={viewMonth} 
-              date={currentDate} 
-            />
             
             <div className="grid grid-cols-7 gap-1 text-xs mt-1">
               {view === 'day' ? (
@@ -417,26 +361,22 @@
       
       const [view, setView] = useState('day');
       const [searchQuery, setSearchQuery] = useState('');
-      const [deferredInstallPrompt, setDeferredInstallPrompt] = useState(null);
       
       useEffect(() => {
         localStorage.setItem("habits", JSON.stringify(habits));
         
-        // PWA installation prompt
-        window.addEventListener('beforeinstallprompt', (e) => {
-          e.preventDefault();
-          setDeferredInstallPrompt(e);
-        });
-        
-        // Offline detection
-        window.addEventListener('offline', () => {
-          console.log("App is offline");
-        });
-        
-        return () => {
-          window.removeEventListener('beforeinstallprompt', () => {});
-          window.removeEventListener('offline', () => {});
-        };
+        // Register service worker only in production
+        if ('serviceWorker' in navigator && window.location.hostname === '13v13reddy.github.io') {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/HabitTracker/sw.js')
+              .then(registration => {
+                console.log('SW registered:', registration);
+              })
+              .catch(error => {
+                console.log('SW registration failed:', error);
+              });
+          });
+        }
       }, [habits]);
       
       const addHabit = (title, category = 'other') => {
@@ -488,18 +428,6 @@
         habit.title.toLowerCase().includes(searchQuery.toLowerCase())
       );
       
-      const promptInstall = () => {
-        if (deferredInstallPrompt) {
-          deferredInstallPrompt.prompt();
-          deferredInstallPrompt.userChoice.then(choice => {
-            if (choice.outcome === 'accepted') {
-              console.log('User accepted install');
-            }
-            setDeferredInstallPrompt(null);
-          });
-        }
-      };
-      
       return (
         <div className="min-h-screen px-4 py-6">
           <div className="max-w-3xl mx-auto space-y-8">
@@ -524,15 +452,6 @@
                   Mark All Today
                 </button>
               </div>
-              
-              {!isPWA && deferredInstallPrompt && (
-                <button
-                  onClick={promptInstall}
-                  className="px-4 py-2 bg-green-500 text-white rounded-lg whitespace-nowrap"
-                >
-                  Install App
-                </button>
-              )}
             </div>
             
             <div className="flex gap-2">
@@ -597,49 +516,10 @@
     
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
-    
-    // Service Worker registration for PWA
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js').then(
-          registration => {
-            console.log('ServiceWorker registration successful');
-          }, 
-          err => {
-            console.log('ServiceWorker registration failed: ', err);
-          }
-        );
-      });
-    }
-  </script>
-  
-  <!-- Manifest for PWA -->
-  <script type="application/json" id="manifest">
-    {
-      "name": "Habit Tracker Pro",
-      "short_name": "HabitPro",
-      "start_url": ".",
-      "display": "standalone",
-      "background_color": "#f8fafc",
-      "theme_color": "#3b82f6",
-      "description": "Advanced habit tracking application",
-      "icons": [
-        {
-          "src": "icon-192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        },
-        {
-          "src": "icon-512.png",
-          "sizes": "512x512",
-          "type": "image/png"
-        }
-      ]
-    }
   </script>
   
   <noscript>
-    <div class="nojs-message">
+    <div style="text-align: center; padding: 2rem;">
       <h1>Habit Tracker Pro</h1>
       <p>This application requires JavaScript to function. Please enable JavaScript in your browser settings.</p>
     </div>
